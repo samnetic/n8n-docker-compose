@@ -1,0 +1,22 @@
+# Secrets
+.env
+.env.*
+secrets/
+
+# Git
+.git/
+
+# Docs
+*.md
+LICENSE
+
+# Compose files
+compose*.yml
+
+# Local/temp
+local-files/
+*.log
+.DS_Store
+.idea/
+.vscode/
+.claude/

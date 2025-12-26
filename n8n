@@ -1,0 +1,188 @@
+#!/bin/bash
+# =============================================================================
+# n8n Docker Compose Wrapper
+# =============================================================================
+# Usage:
+#   ./n8n local up -d              # Local with queue mode (.env.local)
+#   ./n8n staging up -d            # Staging with .env.staging
+#   ./n8n up -d                    # Production with .env
+#   ./n8n dev up -d                # Development (single instance, no queue)
+#   ./n8n <env> down               # Stop environment
+#   ./n8n <env> logs -f            # Follow logs
+#
+# First time setup:
+#   ./n8n init local               # Create .env.local (queue mode, localhost)
+#   ./n8n init staging             # Create .env.staging
+#   ./n8n init                     # Create .env (production)
+# =============================================================================
+
+set -e
+cd "$(dirname "$0")"
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+CYAN='\033[0;36m'
+NC='\033[0m'
+
+# Generate secrets in a file
+generate_secrets() {
+    local file="$1"
+
+    if [ ! -f "$file" ]; then
+        cp .env.example "$file"
+        echo -e "  ${GREEN}Created${NC} $file"
+    fi
+
+    local enc_key=$(openssl rand -hex 32)
+    local runner_token=$(openssl rand -hex 32)
+    local pg_pass=$(openssl rand -hex 32)
+    local redis_pass=$(openssl rand -hex 32)
+
+    sed -i "s/N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=$enc_key/" "$file"
+    sed -i "s/N8N_RUNNERS_AUTH_TOKEN=.*/N8N_RUNNERS_AUTH_TOKEN=$runner_token/" "$file"
+    sed -i "s/POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$pg_pass/" "$file"
+    sed -i "s/REDIS_PASSWORD=.*/REDIS_PASSWORD=$redis_pass/" "$file"
+
+    echo -e "  ${GREEN}Generated${NC} secrets in $file"
+}
+
+# Initialize environment
+init_env() {
+    local env="${1:-prod}"
+    local file=".env"
+    local project="n8n-prod"
+    local port="5678"
+    local host="n8n.yourdomain.com"
+    local protocol="https"
+
+    case "$env" in
+        local)
+            file=".env.local"
+            project="n8n-local"
+            port="5678"
+            host="localhost"
+            protocol="http"
+            ;;
+        staging)
+            file=".env.staging"
+            project="n8n-staging"
+            port="5679"
+            ;;
+        prod|production)
+            file=".env"
+            project="n8n-prod"
+            port="5678"
+            ;;
+    esac
+
+    echo -e "${GREEN}Initializing $env environment...${NC}"
+    generate_secrets "$file"
+
+    # Set project name and port
+    sed -i "s/N8N_PORT=.*/N8N_PORT=$port/" "$file"
+    sed -i "s/N8N_HOST=.*/N8N_HOST=$host/" "$file"
+    sed -i "s/N8N_PROTOCOL=.*/N8N_PROTOCOL=$protocol/" "$file"
+    sed -i "s|WEBHOOK_URL=.*|WEBHOOK_URL=$protocol://$host:$port/|" "$file"
+    sed -i "s|N8N_EDITOR_BASE_URL=.*|N8N_EDITOR_BASE_URL=$protocol://$host:$port/|" "$file"
+
+    if grep -q "COMPOSE_PROJECT_NAME" "$file"; then
+        sed -i "s/COMPOSE_PROJECT_NAME=.*/COMPOSE_PROJECT_NAME=$project/" "$file"
+    else
+        echo "" >> "$file"
+        echo "# Project isolation" >> "$file"
+        echo "COMPOSE_PROJECT_NAME=$project" >> "$file"
+    fi
+
+    echo ""
+    if [ "$env" = "local" ]; then
+        echo -e "${GREEN}Ready!${NC} Run ${CYAN}./n8n local up -d${NC}"
+    else
+        echo -e "${YELLOW}Next steps:${NC}"
+        echo -e "  1. Edit ${CYAN}$file${NC} - set N8N_HOST, WEBHOOK_URL, etc."
+        echo -e "  2. Run ${CYAN}./n8n ${env} up -d${NC}"
+    fi
+}
+
+# Show help
+show_help() {
+    cat << 'EOF'
+n8n Docker Compose Wrapper
+
+USAGE:
+    ./n8n [ENVIRONMENT] COMMAND [OPTIONS]
+
+ENVIRONMENTS:
+    local           Local with queue mode (.env.local) - same as prod
+    staging         Staging with .env.staging
+    (default)       Production with .env
+    dev             Development (single instance, no queue)
+
+COMMANDS:
+    up              Start services
+    down            Stop services
+    logs            View logs
+    ps              Show status
+    exec            Execute in container
+    config          Validate config
+    pull            Pull images
+
+SETUP:
+    init local      Create .env.local (queue mode, localhost)
+    init staging    Create .env.staging with secrets
+    init            Create .env with secrets (production)
+
+EXAMPLES:
+    ./n8n init local                # Setup local (queue mode)
+    ./n8n local up -d               # Start local
+    ./n8n init staging              # Setup staging
+    ./n8n staging up -d             # Start staging
+    ./n8n init                      # Setup production
+    ./n8n up -d                     # Start production
+    ./n8n dev up -d                 # Start simple dev (no queue)
+    ./n8n local up -d --scale n8n-worker=3   # Scale workers
+
+RUNNING MULTIPLE ENVIRONMENTS:
+    ./n8n init local && ./n8n init staging
+    ./n8n local up -d               # Local on :5678
+    ./n8n staging up -d             # Staging on :5679
+EOF
+}
+
+# Main
+case "${1:-}" in
+    init)
+        init_env "${2:-prod}"
+        exit 0
+        ;;
+    -h|--help|help|"")
+        show_help
+        exit 0
+        ;;
+    dev)
+        shift
+        [ $# -eq 0 ] && { echo -e "${RED}Error: Missing command${NC}"; exit 1; }
+        echo -e "${CYAN}[dev]${NC} docker compose -f compose.dev.yml $*"
+        exec docker compose -f compose.dev.yml "$@"
+        ;;
+    local)
+        shift
+        [ $# -eq 0 ] && { echo -e "${RED}Error: Missing command${NC}"; exit 1; }
+        [ ! -f .env.local ] && { echo -e "${YELLOW}Run ./n8n init local first${NC}"; exit 1; }
+        echo -e "${CYAN}[local]${NC} docker compose --env-file .env.local $*"
+        exec docker compose --env-file .env.local "$@"
+        ;;
+    staging)
+        shift
+        [ $# -eq 0 ] && { echo -e "${RED}Error: Missing command${NC}"; exit 1; }
+        [ ! -f .env.staging ] && { echo -e "${YELLOW}Run ./n8n init staging first${NC}"; exit 1; }
+        echo -e "${CYAN}[staging]${NC} docker compose --env-file .env.staging $*"
+        exec docker compose --env-file .env.staging "$@"
+        ;;
+    *)
+        # Production (default)
+        [ ! -f .env ] && { echo -e "${YELLOW}Run ./n8n init first${NC}"; exit 1; }
+        echo -e "${CYAN}[prod]${NC} docker compose $*"
+        exec docker compose "$@"
+        ;;
+esac

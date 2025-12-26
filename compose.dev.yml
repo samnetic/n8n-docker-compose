@@ -1,0 +1,87 @@
+# =============================================================================
+# n8n Local Development
+# =============================================================================
+# Simplified single-instance mode for local development.
+# No queue mode, internal task runners, all ports exposed.
+#
+# Usage:
+#   ./n8n dev up -d
+#   ./n8n dev logs -f
+#   ./n8n dev down
+#
+# =============================================================================
+
+volumes:
+  n8n_dev_data:
+  postgres_dev_data:
+
+networks:
+  n8n_dev_net:
+    driver: bridge
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    networks: [n8n_dev_net]
+    environment:
+      POSTGRES_DB: n8n
+      POSTGRES_USER: n8n
+      POSTGRES_PASSWORD: n8n_dev_password
+    volumes:
+      - postgres_dev_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U n8n"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-2.0.3}
+    restart: unless-stopped
+    networks: [n8n_dev_net]
+    depends_on:
+      postgres: { condition: service_healthy }
+    ports:
+      - "5678:5678"
+    environment:
+      NODE_ENV: development
+      GENERIC_TIMEZONE: ${TZ:-UTC}
+      N8N_ENCRYPTION_KEY: dev-only-key-do-not-use-in-production
+      # Database
+      DB_TYPE: postgresdb
+      DB_POSTGRESDB_HOST: postgres
+      DB_POSTGRESDB_DATABASE: n8n
+      DB_POSTGRESDB_USER: n8n
+      DB_POSTGRESDB_PASSWORD: n8n_dev_password
+      # URLs
+      N8N_HOST: localhost
+      N8N_PROTOCOL: http
+      WEBHOOK_URL: http://localhost:5678/
+      # Single instance mode (no queue)
+      EXECUTIONS_MODE: regular
+      # Internal task runners (no sidecar needed)
+      N8N_RUNNERS_ENABLED: "true"
+      N8N_RUNNERS_MODE: internal
+      # Allow everything in dev
+      NODE_FUNCTION_ALLOW_BUILTIN: "*"
+      NODE_FUNCTION_ALLOW_EXTERNAL: "*"
+      # Relaxed security for dev
+      N8N_BLOCK_ENV_ACCESS_IN_NODE: "false"
+      N8N_SECURE_COOKIE: "false"
+      # Keep all execution data for debugging
+      EXECUTIONS_DATA_PRUNE: "false"
+      # Verbose logging
+      N8N_LOG_LEVEL: debug
+      N8N_DIAGNOSTICS_ENABLED: "false"
+    volumes:
+      - n8n_dev_data:/home/node/.n8n
+      - ./local-files:/files
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 30s

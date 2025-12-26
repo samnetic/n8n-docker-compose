@@ -1,0 +1,229 @@
+# =============================================================================
+# n8n Production-Ready Docker Compose
+# =============================================================================
+# Single compose file for staging AND production deployments.
+# Use environment variables to control behavior.
+#
+# Quick Start:
+#   ./n8n up          # Start with defaults
+#   ./n8n up -d       # Start detached
+#   ./n8n logs -f     # Follow logs
+#   ./n8n down        # Stop all
+#
+# Scale workers:
+#   ./n8n up -d --scale n8n-worker=3
+#
+# Architecture:
+#   n8n-main ─────► Task Broker :5679 ◄──── n8n-main-runner (sidecar)
+#       │
+#       ▼ Redis Queue
+#       │
+#   n8n-worker ──► Task Broker :5679 ◄──── n8n-worker-runner (sidecar)
+#
+# =============================================================================
+
+# -----------------------------------------------------------------------------
+# Shared Anchors (DRY)
+# -----------------------------------------------------------------------------
+x-n8n-image: &n8n-image
+  image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-2.0.3}
+
+x-runner-image: &runner-image
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.runners
+    args:
+      N8N_VERSION: ${N8N_VERSION:-2.0.3}
+  image: n8n-runners-custom:${N8N_VERSION:-2.0.3}
+
+x-common: &common
+  restart: unless-stopped
+  init: true
+  stop_grace_period: 30s
+
+x-n8n-env: &n8n-env
+  GENERIC_TIMEZONE: ${TZ:-UTC}
+  NODE_ENV: production
+  # Database
+  DB_TYPE: postgresdb
+  DB_POSTGRESDB_HOST: postgres
+  DB_POSTGRESDB_PORT: 5432
+  DB_POSTGRESDB_DATABASE: ${POSTGRES_DB:-n8n}
+  DB_POSTGRESDB_USER: ${POSTGRES_USER:-n8n}
+  DB_POSTGRESDB_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+  # Encryption (same across all instances!)
+  N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:?N8N_ENCRYPTION_KEY required}
+  # Queue mode
+  EXECUTIONS_MODE: queue
+  QUEUE_BULL_REDIS_HOST: redis
+  QUEUE_BULL_REDIS_PORT: 6379
+  QUEUE_BULL_REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+  # Task runners
+  N8N_RUNNERS_ENABLED: "true"
+  N8N_RUNNERS_MODE: external
+  N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?N8N_RUNNERS_AUTH_TOKEN required}
+  N8N_RUNNERS_BROKER_LISTEN_ADDRESS: "0.0.0.0"
+  # Security
+  N8N_BLOCK_ENV_ACCESS_IN_NODE: "true"
+  N8N_SECURE_COOKIE: ${N8N_SECURE_COOKIE:-true}
+  # Execution data
+  EXECUTIONS_DATA_PRUNE: "true"
+  EXECUTIONS_DATA_MAX_AGE: ${EXECUTIONS_DATA_MAX_AGE:-336}
+  EXECUTIONS_DATA_SAVE_ON_ERROR: all
+  EXECUTIONS_DATA_SAVE_ON_SUCCESS: all
+  # Code node modules
+  NODE_FUNCTION_ALLOW_BUILTIN: ${NODE_FUNCTION_ALLOW_BUILTIN:-crypto,fs,path}
+  NODE_FUNCTION_ALLOW_EXTERNAL: ${NODE_FUNCTION_ALLOW_EXTERNAL:-lodash,moment,axios}
+  # Logging
+  N8N_LOG_LEVEL: ${N8N_LOG_LEVEL:-info}
+  N8N_DIAGNOSTICS_ENABLED: "false"
+
+x-runner-env: &runner-env
+  N8N_RUNNERS_AUTH_TOKEN: ${N8N_RUNNERS_AUTH_TOKEN:?N8N_RUNNERS_AUTH_TOKEN required}
+  N8N_RUNNERS_MAX_CONCURRENCY: ${N8N_RUNNERS_MAX_CONCURRENCY:-5}
+  N8N_RUNNERS_TASK_BROKER_URI: http://localhost:5679
+  NODE_FUNCTION_ALLOW_BUILTIN: ${NODE_FUNCTION_ALLOW_BUILTIN:-crypto,fs,path}
+  NODE_FUNCTION_ALLOW_EXTERNAL: ${NODE_FUNCTION_ALLOW_EXTERNAL:-lodash,moment,axios}
+
+x-healthcheck-n8n: &healthcheck-n8n
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://localhost:5678/healthz || exit 1"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 60s
+
+x-healthcheck-runner: &healthcheck-runner
+  healthcheck:
+    test: ["CMD-SHELL", "wget -qO- http://localhost:5680/healthz || exit 1"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+    start_period: 30s
+
+x-deploy-n8n: &deploy-n8n
+  deploy:
+    resources:
+      limits:
+        memory: ${N8N_MEMORY_LIMIT:-2G}
+      reservations:
+        memory: 512M
+
+x-deploy-runner: &deploy-runner
+  deploy:
+    resources:
+      limits:
+        memory: ${RUNNER_MEMORY_LIMIT:-1G}
+      reservations:
+        memory: 256M
+
+# -----------------------------------------------------------------------------
+# Infrastructure
+# -----------------------------------------------------------------------------
+volumes:
+  n8n_data:
+  postgres_data:
+  redis_data:
+
+networks:
+  n8n_net:
+    driver: bridge
+
+# -----------------------------------------------------------------------------
+# Services
+# -----------------------------------------------------------------------------
+services:
+  # --- PostgreSQL ---
+  postgres:
+    image: postgres:16-alpine
+    <<: *common
+    networks: [n8n_net]
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-n8n}
+      POSTGRES_USER: ${POSTGRES_USER:-n8n}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD required}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-n8n}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 30s
+
+  # --- Redis ---
+  redis:
+    image: redis:7-alpine
+    <<: *common
+    networks: [n8n_net]
+    command: >
+      redis-server
+      --appendonly yes
+      --maxmemory ${REDIS_MAXMEMORY:-256mb}
+      --maxmemory-policy volatile-lru
+      ${REDIS_PASSWORD:+--requirepass ${REDIS_PASSWORD}}
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # --- n8n Main (Editor/API/Webhooks) ---
+  n8n-main:
+    <<: [*n8n-image, *common, *healthcheck-n8n, *deploy-n8n]
+    networks: [n8n_net]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+    ports:
+      - "${N8N_PORT:-5678}:5678"
+    environment:
+      <<: *n8n-env
+      N8N_HOST: ${N8N_HOST:-localhost}
+      N8N_PROTOCOL: ${N8N_PROTOCOL:-http}
+      WEBHOOK_URL: ${WEBHOOK_URL:-http://localhost:5678/}
+      N8N_EDITOR_BASE_URL: ${N8N_EDITOR_BASE_URL:-http://localhost:5678/}
+      N8N_PROXY_HOPS: ${N8N_PROXY_HOPS:-0}
+      OFFLOAD_MANUAL_EXECUTIONS_TO_WORKERS: "true"
+      QUEUE_HEALTH_CHECK_ACTIVE: "true"
+      N8N_METRICS: "true"
+      N8N_TEMPLATES_ENABLED: "true"
+      N8N_COMMUNITY_PACKAGES_ENABLED: "true"
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  # --- Task Runner for Main ---
+  n8n-main-runner:
+    <<: [*runner-image, *common, *healthcheck-runner, *deploy-runner]
+    network_mode: "service:n8n-main"
+    depends_on:
+      n8n-main: { condition: service_healthy }
+    environment:
+      <<: *runner-env
+
+  # --- n8n Worker (scalable) ---
+  n8n-worker:
+    <<: [*n8n-image, *common, *healthcheck-n8n, *deploy-n8n]
+    command: worker --concurrency=${WORKER_CONCURRENCY:-10}
+    networks: [n8n_net]
+    depends_on:
+      postgres: { condition: service_healthy }
+      redis: { condition: service_healthy }
+      n8n-main: { condition: service_healthy }
+    environment:
+      <<: *n8n-env
+      QUEUE_HEALTH_CHECK_ACTIVE: "true"
+      EXECUTIONS_TIMEOUT: ${EXECUTIONS_TIMEOUT:-3600}
+    volumes:
+      - n8n_data:/home/node/.n8n
+
+  # --- Task Runner for Worker ---
+  n8n-worker-runner:
+    <<: [*runner-image, *common, *healthcheck-runner, *deploy-runner]
+    network_mode: "service:n8n-worker"
+    depends_on:
+      n8n-worker: { condition: service_healthy }
+    environment:
+      <<: *runner-env

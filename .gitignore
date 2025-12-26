@@ -1,0 +1,19 @@
+# Secrets - NEVER commit!
+.env
+.env.staging
+.env.local
+secrets/
+
+# Keep examples
+!.env.example
+!.env.sample
+
+# Local data
+local-files/
+*.log
+
+# IDE/OS
+.idea/
+.vscode/
+*.swp
+.DS_Store

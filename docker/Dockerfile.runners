@@ -1,0 +1,38 @@
+# =============================================================================
+# Custom n8n Task Runners
+# =============================================================================
+# Extends the official n8n runners image with additional npm packages.
+# Build: docker build -f docker/Dockerfile.runners -t n8n-runners-custom .
+#
+# Packages must also be allowlisted in n8n-task-runners.json env-overrides.
+# =============================================================================
+
+ARG N8N_VERSION=2.0.3
+FROM n8nio/runners:${N8N_VERSION}
+
+USER root
+
+# -----------------------------------------------------------------------------
+# Task runner config with module allowlist (env-overrides)
+# This is required for external runners to respect NODE_FUNCTION_ALLOW_*
+# -----------------------------------------------------------------------------
+COPY n8n-task-runners.json /etc/n8n-task-runners.json
+RUN chmod 644 /etc/n8n-task-runners.json
+
+# -----------------------------------------------------------------------------
+# JavaScript packages (Code node)
+# Add packages here AND in n8n-task-runners.json env-overrides
+# -----------------------------------------------------------------------------
+WORKDIR /opt/runners/task-runner-javascript
+RUN pnpm add xlsx pdf-lib uuid date-fns
+
+# -----------------------------------------------------------------------------
+# Python packages (Python Code node) - uncomment if needed
+# Also add to n8n-task-runners.json with N8N_RUNNERS_EXTERNAL_ALLOW
+# -----------------------------------------------------------------------------
+# WORKDIR /opt/runners/task-runner-python
+# RUN uv pip install requests pandas numpy
+
+WORKDIR /home/runner
+
+USER runner
