@@ -7,8 +7,8 @@
 # Packages must also be allowlisted in n8n-task-runners.json env-overrides.
 # =============================================================================
 
-ARG N8N_VERSION=2.0.3
-FROM n8nio/runners:${N8N_VERSION}
+ARG RUNNERS_VERSION=latest
+FROM n8nio/runners:${RUNNERS_VERSION}
 
 USER root
 

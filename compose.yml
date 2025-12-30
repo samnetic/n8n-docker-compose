@@ -29,12 +29,14 @@ x-n8n-image: &n8n-image
   image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-2.0.3}
 
 x-runner-image: &runner-image
-  build:
-    context: .
-    dockerfile: docker/Dockerfile.runners
-    args:
-      N8N_VERSION: ${N8N_VERSION:-2.0.3}
-  image: n8n-runners-custom:${N8N_VERSION:-2.0.3}
+  # To use custom runner with extra packages, uncomment below and comment out the image line
+  # build:
+  #   context: .
+  #   dockerfile: docker/Dockerfile.runners
+  #   args:
+  #     RUNNERS_VERSION: ${RUNNERS_VERSION:-latest}
+  # image: n8n-runners-custom:${N8N_VERSION:-2.0.3}
+  image: n8nio/runners:${RUNNERS_VERSION:-latest}
 
 x-common: &common
   restart: unless-stopped
