@@ -13,18 +13,15 @@ FROM n8nio/runners:${RUNNERS_VERSION}
 USER root
 
 # -----------------------------------------------------------------------------
-# Task runner config with module allowlist (env-overrides)
-# This is required for external runners to respect NODE_FUNCTION_ALLOW_*
-# -----------------------------------------------------------------------------
-COPY n8n-task-runners.json /etc/n8n-task-runners.json
-RUN chmod 644 /etc/n8n-task-runners.json
-
-# -----------------------------------------------------------------------------
-# JavaScript packages (Code node)
+# Task runner config + JavaScript packages (single consolidated layer)
 # Add packages here AND in n8n-task-runners.json env-overrides
 # -----------------------------------------------------------------------------
-WORKDIR /opt/runners/task-runner-javascript
-RUN pnpm add xlsx pdf-lib uuid date-fns
+COPY n8n-task-runners.json /etc/n8n-task-runners.json
+RUN chmod 644 /etc/n8n-task-runners.json && \
+    cd /opt/runners/task-runner-javascript && \
+    pnpm add xlsx pdf-lib uuid date-fns && \
+    pnpm store prune && \
+    rm -rf /tmp/* /root/.cache
 
 # -----------------------------------------------------------------------------
 # Python packages (Python Code node) - uncomment if needed

@@ -25,7 +25,7 @@ YELLOW='\033[1;33m'
 CYAN='\033[0;36m'
 NC='\033[0m'
 
-# Generate secrets in a file
+# Generate secrets as individual files in ./secrets/ (Docker secrets)
 generate_secrets() {
     local file="$1"
 
@@ -34,17 +34,29 @@ generate_secrets() {
         echo -e "  ${GREEN}Created${NC} $file"
     fi
 
-    local enc_key=$(openssl rand -hex 32)
-    local runner_token=$(openssl rand -hex 32)
-    local pg_pass=$(openssl rand -hex 32)
-    local redis_pass=$(openssl rand -hex 32)
+    # Create secrets directory
+    local secrets_dir="./secrets"
+    mkdir -p "$secrets_dir"
 
-    sed -i "s/N8N_ENCRYPTION_KEY=.*/N8N_ENCRYPTION_KEY=$enc_key/" "$file"
-    sed -i "s/N8N_RUNNERS_AUTH_TOKEN=.*/N8N_RUNNERS_AUTH_TOKEN=$runner_token/" "$file"
-    sed -i "s/POSTGRES_PASSWORD=.*/POSTGRES_PASSWORD=$pg_pass/" "$file"
-    sed -i "s/REDIS_PASSWORD=.*/REDIS_PASSWORD=$redis_pass/" "$file"
+    # Generate and write each secret to its own file (mode 600)
+    local secret_files=("n8n_encryption_key" "n8n_runners_auth_token" "postgres_password" "redis_password")
+    for secret_file in "${secret_files[@]}"; do
+        if [ ! -f "$secrets_dir/$secret_file" ]; then
+            openssl rand -hex 32 > "$secrets_dir/$secret_file"
+            chmod 600 "$secrets_dir/$secret_file"
+            echo -e "  ${GREEN}Generated${NC} $secrets_dir/$secret_file"
+        else
+            echo -e "  ${YELLOW}Exists${NC}   $secrets_dir/$secret_file (kept)"
+        fi
+    done
 
-    echo -e "  ${GREEN}Generated${NC} secrets in $file"
+    # Comment out secret lines in .env with a note pointing to secrets/
+    sed -i 's/^N8N_ENCRYPTION_KEY=.*$/# N8N_ENCRYPTION_KEY — stored in secrets\/n8n_encryption_key/' "$file"
+    sed -i 's/^N8N_RUNNERS_AUTH_TOKEN=.*$/# N8N_RUNNERS_AUTH_TOKEN — stored in secrets\/n8n_runners_auth_token/' "$file"
+    sed -i 's/^POSTGRES_PASSWORD=.*$/# POSTGRES_PASSWORD — stored in secrets\/postgres_password/' "$file"
+    sed -i 's/^REDIS_PASSWORD=.*$/# REDIS_PASSWORD — stored in secrets\/redis_password/' "$file"
+
+    echo -e "  ${GREEN}Secrets${NC}  stored in $secrets_dir/ (Docker secrets)"
 }
 
 # Initialize environment

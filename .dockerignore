@@ -5,6 +5,7 @@ secrets/
 
 # Git
 .git/
+.gitignore
 
 # Docs
 *.md

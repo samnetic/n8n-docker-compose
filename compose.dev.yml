@@ -3,6 +3,7 @@
 # =============================================================================
 # Simplified single-instance mode for local development.
 # No queue mode, internal task runners, all ports exposed.
+# Security relaxed for dev (no read_only, no cap_drop).
 #
 # Usage:
 #   ./n8n dev up -d
@@ -23,6 +24,7 @@ services:
   postgres:
     image: postgres:16-alpine
     restart: unless-stopped
+    init: true
     networks: [n8n_dev_net]
     environment:
       POSTGRES_DB: n8n
@@ -32,20 +34,40 @@ services:
       - postgres_dev_data:/var/lib/postgresql/data
     ports:
       - "5432:5432"
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U n8n"]
       interval: 5s
       timeout: 3s
       retries: 5
+      start_period: 15s
 
   n8n:
     image: docker.n8n.io/n8nio/n8n:${N8N_VERSION:-2.0.3}
     restart: unless-stopped
+    init: true
     networks: [n8n_dev_net]
     depends_on:
       postgres: { condition: service_healthy }
     ports:
       - "5678:5678"
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
     environment:
       NODE_ENV: development
       GENERIC_TIMEZONE: ${TZ:-UTC}
