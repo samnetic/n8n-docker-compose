@@ -12,7 +12,7 @@ Production-ready n8n v2.0+ self-hosted deployment with queue mode, horizontal sc
 - **External Task Runners** - Isolated JavaScript/Python code execution
 - **Multi-Environment** - Local, staging, production from one repo
 - **One Command Setup** - Auto-generated secrets, ready in seconds
-- **Custom npm Packages** - xlsx, pdf-lib, uuid, date-fns pre-installed
+- **Custom npm Packages** - optional custom runner build with extra npm/Python packages
 - **Production Hardened** - Resource limits, health checks, security defaults
 
 ## Quick Start
@@ -176,27 +176,42 @@ server {
 
 ## Custom npm Packages
 
-Pre-installed packages for Code nodes: `xlsx`, `pdf-lib`, `uuid`, `date-fns`, `lodash`, `moment`, `axios`
+By default the official `n8nio/runners` image is used. To add npm packages, enable the custom build:
 
-**Add more packages:**
+**1. Uncomment the build block in `compose.yml`** (and comment out the plain `image:` line):
 
-1. Edit `docker/Dockerfile.runners`:
+```yaml
+x-runner-image: &runner-image
+  build:
+    context: .
+    dockerfile: docker/Dockerfile.runners
+    args:
+      RUNNERS_VERSION: ${RUNNERS_VERSION:-latest}
+  image: n8n-runners-custom:${N8N_VERSION:-2.0.3}
+  # image: n8nio/runners:${RUNNERS_VERSION:-latest}   # comment out when building
+```
+
+**2. Edit `docker/Dockerfile.runners`** to add your packages:
+
 ```dockerfile
 RUN cd /opt/runners/task-runner-javascript && \
     pnpm add xlsx pdf-lib uuid date-fns your-package
 ```
 
-2. Add to `n8n-task-runners.json` in `env-overrides`:
+**3. Add to `n8n-task-runners.json` in `env-overrides`:**
+
 ```json
-"NODE_FUNCTION_ALLOW_EXTERNAL": "lodash,moment,axios,xlsx,pdf-lib,uuid,date-fns,your-package"
+"NODE_FUNCTION_ALLOW_EXTERNAL": "xlsx,pdf-lib,uuid,date-fns,your-package"
 ```
 
-3. Rebuild:
+**4. Rebuild:**
+
 ```bash
 ./n8n local down && ./n8n local up -d --build
 ```
 
 **Usage in Code node:**
+
 ```javascript
 const XLSX = require('xlsx');
 const { v4: uuidv4 } = require('uuid');
@@ -204,6 +219,8 @@ const { format } = require('date-fns');
 
 return { id: uuidv4(), date: format(new Date(), 'yyyy-MM-dd') };
 ```
+
+**Python packages** — uncomment the Python block in `docker/Dockerfile.runners` and add packages to the `N8N_RUNNERS_EXTERNAL_ALLOW` entry in `n8n-task-runners.json`.
 
 ## Scaling
 
@@ -336,8 +353,8 @@ Ports are bound to `127.0.0.1` only — not accessible from the network. Use a r
 
 ## Requirements
 
-- Docker Engine 20.10+
-- Docker Compose v2.0+
+- Docker Engine 24.0+
+- Docker Compose v2.20+ (for `start_interval` healthcheck support)
 - 2GB RAM minimum (4GB+ for production)
 
 ## AWS / Fargate
